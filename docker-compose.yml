@@ -1,0 +1,73 @@
+version: '3.4'
+
+volumes:
+  gitlab-config: {}
+  gitlab-data: {}
+  gitlab-logs: {}
+  gitlab-runner-config: {}
+
+networks:
+  docker_acme-docker-net:
+    external: true
+
+services:
+    gitlab-server:
+      build:
+        context: ./
+        dockerfile: ./Dockerfile
+      networks:
+         - docker_acme-docker-net
+      volumes:
+        - gitlab-config:/etc/gitlab
+        - gitlab-logs:/var/log/gitlab
+        - gitlab-data:/var/opt/gitlab
+      ports:
+        - "5200:443"
+        - "5201:80"
+        - "5202:22"
+
+    dind:
+      image: docker:20-dind
+      networks:
+         - docker_acme-docker-net
+      restart: always
+      privileged: true
+      environment:
+        DOCKER_TLS_CERTDIR: ""
+      command:
+        - --storage-driver=overlay2
+
+    gitlab-runner:
+      restart: always
+      image: registry.gitlab.com/gitlab-org/gitlab-runner:alpine
+      networks:
+         - docker_acme-docker-net
+      depends_on:
+        - gitlab-server
+        - dind
+      environment:
+        - DOCKER_HOST=tcp://dind:2375
+      volumes:
+        - gitlab-runner-config:/etc/gitlab-runner:z
+
+    gitlab-register-runner:
+      restart: 'no'
+      image: registry.gitlab.com/gitlab-org/gitlab-runner:alpine
+      networks:
+         - docker_acme-docker-net
+      depends_on:
+        - gitlab-server
+        - dind
+      environment:
+        - CI_SERVER_URL=${CI_SERVER_URL}
+        - REGISTRATION_TOKEN=${REGISTRATION_TOKEN}
+      command:
+        - register
+        - --non-interactive
+        - --locked=false
+        - --name=${RUNNER_NAME}
+        - --executor=docker
+        - --docker-image=docker:20-dind
+        - --docker-volumes=/var/run/docker.sock:/var/run/docker.sock
+      volumes:
+        - gitlab-runner-config:/etc/gitlab-runner:z
